@@ -1,45 +1,91 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 import uvicorn
-import requests
 import dotenv
 import os
+from google import genai
+from google.genai import types
+
+from linebot.v3.webhook import WebhookParser, WebhookHandler
+from linebot.v3.messaging import (
+    AsyncApiClient,
+    AsyncMessagingApi,
+    Configuration,
+    ReplyMessageRequest,
+    TextMessage
+)
+from linebot.v3.exceptions import (
+    InvalidSignatureError
+)
+from linebot.v3.webhooks import (
+    MessageEvent,
+    TextMessageContent
+)
 
 dotenv.load_dotenv()
-app = FastAPI()
 
+
+LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_API_URL = 'https://api.line.me/v2/bot/message/push'
+GOOGLE_API_KEY=os.getenv('GOOGLE_API_KEY')
 
-def send_line_message(to, messages):
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
-    }
-    data = {
-        'to': to,
-        'messages': messages
-    }
-    response = requests.post(LINE_API_URL, headers=headers, json=data)
-    return response.status_code, response.json()
+client = genai.Client(api_key='GEMINI_API_KEY')
 
-class LineMessage(BaseModel):
-    events: list
+configuration = Configuration(
+    access_token=LINE_CHANNEL_ACCESS_TOKEN
+)
 
-@app.post("/webhook")
-async def webhook(request: Request, line_message: LineMessage):
-    for event in line_message.events:
-        # Process the event here
-        print(event)
-        # 예시: 메시지 보내기
-        user_id = event['source']['userId']
-        message = [{
-            'type': 'text',
-            'text': 'Hello from FastAPI!'
-        }]
-        status_code, response = send_line_message(user_id, message)
-        print(f'Status: {status_code}, Response: {response}')
-    return {"status": "ok"}
+app = FastAPI()
+async_api_client = AsyncApiClient(configuration)
+line_bot_api = AsyncMessagingApi(async_api_client)
+parser = WebhookParser(LINE_CHANNEL_SECRET)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+@app.post("/callback")
+async def handle_callback(request: Request):
+    signature = request.headers['X-Line-Signature']
+
+    # get request body as text
+    body = await request.body()
+    body = body.decode()
+
+    try:
+        events = parser.parse(body, signature)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    for event in events:
+        if not isinstance(event, MessageEvent):
+            continue
+        if not isinstance(event.message, TextMessageContent):
+            continue
+
+        await line_bot_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=event.message.text)]
+            )
+        )
+
+    return 'OK'
+
+async def get_gemini_response():
+    response = await client.aio.models.generate_content(
+        model='gemini-2.0-flash-exp',
+        contents='high',
+        config=types.GenerateContentConfig(
+            temperature=1.0,
+            top_p=0.95,
+            top_k=20,
+            candidate_count=1,
+            max_output_tokens=100,
+            stop_sequences=["STOP!"],
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+        )
+    )
+    return response.result
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
