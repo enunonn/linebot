@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 import uvicorn
@@ -32,19 +33,18 @@ GOOGLE_API_KEY=os.getenv('GOOGLE_API_KEY')
 
 client = genai.Client(api_key='GEMINI_API_KEY')
 
-configuration = Configuration(
-    access_token=LINE_CHANNEL_ACCESS_TOKEN
-)
+
 
 app = FastAPI()
-async_api_client = AsyncApiClient(configuration)
-line_bot_api = AsyncMessagingApi(async_api_client)
+
+
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 @app.post("/callback")
 async def handle_callback(request: Request):
     signature = request.headers['X-Line-Signature']
+
 
     # get request body as text
     body = await request.body()
@@ -61,7 +61,7 @@ async def handle_callback(request: Request):
         if not isinstance(event.message, TextMessageContent):
             continue
 
-        await line_bot_api.reply_message(
+        await app.line_bot_api.reply_message(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
                 messages=[TextMessage(text=event.message.text)]
@@ -69,6 +69,10 @@ async def handle_callback(request: Request):
         )
 
     return 'OK'
+
+@app.get("/")
+async def read_root():
+    return {"Hello": "World"}
 
 async def get_gemini_response():
     response = await client.aio.models.generate_content(
@@ -87,5 +91,19 @@ async def get_gemini_response():
     )
     return response.result
 
+@app.post("/webhook")
+async def webhook(request: Request):
+    # Your webhook handling code here
+    pass
+
+
+async def main():
+    with app:
+        app.configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+        app.async_api_client = AsyncApiClient(app.configuration)
+        app.line_bot_api = AsyncMessagingApi(app.async_api_client)
+    # Your other async code here
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    uvicorn.run(app, host="0.0.0.0", port=8080)

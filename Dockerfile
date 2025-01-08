@@ -1,12 +1,13 @@
 FROM python:3.9-slim-buster
 
-RUN mkdir /backend
-COPY . /backend
-WORKDIR /backend
+RUN mkdir /app
 
-RUN apt-get -y update
-RUN apt-get -y upgrade
+WORKDIR /app
 
-RUN pip install -r requirements.txt
+COPY ./requirements.txt /app/requirements.txt
 
-CMD ["python", "server.py"]
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+
+COPY . /app
+
+CMD ["fastapi", "run", "main.py", "--host", "0.0.0.0", "--port", "8080"]
